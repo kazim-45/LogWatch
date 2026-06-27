@@ -1,8 +1,8 @@
 # LogWatch 📋
 
-**System log anomaly detector — finds suspicious activity in Linux auth logs.**
+**System log anomaly detector — installed as a CLI command.**
 
-Feed it your `/var/log/auth.log` and get a colour-coded threat report: brute-force attacks, successful intrusions, root logins, after-hours access, privilege escalations, new accounts, and port scans.
+Parses Linux auth logs and flags suspicious activity: brute-force attacks, successful intrusions, root logins, after-hours access, privilege escalations, new accounts, and port scans. Outputs a colour-coded terminal report or clean JSON.
 
 ```
 ╭──────────────────────────────────╮
@@ -14,16 +14,16 @@ Feed it your `/var/log/auth.log` and get a colour-coded threat report: brute-for
 ──────────────── Overview ─────────────────
 
    Log entries parsed       3,847
-   Failed logins            412
-   Successful logins        39
-   Anomalies found          6
-   Severity breakdown       🔴 1 critical  🟠 2 high  🟡 3 medium
+   Failed logins              412
+   Successful logins           39
+   Anomalies found              6
+   Severity       🔴 1 critical  🟠 2 high  🟡 3 medium
 
 ─────────────── Top Attacking IPs ─────────────────
 
-  IP Address          Failed Attempts
-  45.33.32.156        382   ██████████████████████████████████
-  198.51.100.77       18    ██
+  IP Address         Failed Attempts
+  45.33.32.156       382   ██████████████████████████████
+  198.51.100.77       18   ██
 
 ──────────────── Findings ─────────────────
 
@@ -31,35 +31,9 @@ Feed it your `/var/log/auth.log` and get a colour-coded threat report: brute-for
      This IP previously had failed attempts and then succeeded —
      possible successful brute-force attack.
 
-  🟠 [HIGH]  Brute-force from 45.33.32.156
-     382 failed login attempts (burst: 14 in 60s window)
-
   🟠 [HIGH]  New user created: 'backdoor'
      A new system user was added. Verify this was intentional.
 ```
-
----
-
-## What it detects
-
-| Finding | Severity | Description |
-|---|---|---|
-| Brute-force attack | 🔴/🟠 | IP with many failed logins in a time window |
-| Successful brute-force | 🔴 | IP that failed then succeeded — likely compromised |
-| Direct root SSH login | 🔴 | Root logging in directly (should never happen) |
-| After-hours login | 🟡 | Successful login between 11 PM and 6 AM |
-| New user/group created | 🟠 | System account added — possible backdoor |
-| Sudo failures | 🟡/🟠 | User trying sudo without permission |
-| Privilege escalation (su) | 🟡 | User switching identity with `su` |
-| Port scan signatures | 🟠 | SSH negotiation failures — typical of scanners |
-
----
-
-## Supported log formats
-
-- `/var/log/auth.log` — Debian, Ubuntu, Kali
-- `/var/log/secure` — RHEL, CentOS, Fedora, Rocky
-- journald ISO timestamp exports
 
 ---
 
@@ -69,75 +43,98 @@ Feed it your `/var/log/auth.log` and get a colour-coded threat report: brute-for
 git clone https://github.com/kazim-45/logwatch.git
 cd logwatch
 pip install rich
+pip install -e .
 ```
 
-No other dependencies — uses Python stdlib for everything else.
+The `-e` flag installs in editable mode — the `logwatch` command points directly at your cloned folder, so any edits to the code take effect instantly without reinstalling.
 
 ---
 
 ## Usage
 
 ```bash
+# Show help
+logwatch --help
+
 # Auto-detect system log (/var/log/auth.log or /var/log/secure)
-python logwatch.py
+logwatch
 
 # Analyse a specific file
-python logwatch.py -f /var/log/auth.log
+logwatch -f /var/log/auth.log
 
-# Generate a sample log with real attack patterns and analyse it
-python logwatch.py --demo
+# Generate a sample log with real attack patterns and analyse it (no setup needed)
+logwatch --demo
 
-# Output findings as JSON (pipe-friendly)
-python logwatch.py -f auth.log --json
+# Output findings as JSON
+logwatch -f auth.log --json
 
-# Save JSON report to file
-python logwatch.py -f auth.log --json report.json
+# Save JSON report to a file
+logwatch -f auth.log --json report.json
 
-# Tune the brute-force threshold (default: 5 failures)
-python logwatch.py -f auth.log --threshold 3
+# Tune the brute-force threshold (default: 5 failed logins)
+logwatch -f auth.log --threshold 3
+
+# Change the burst detection window (default: 60 seconds)
+logwatch -f auth.log --window 30
 
 # Change after-hours window (default: 23:00–06:00)
-python logwatch.py -f auth.log --after-hours-start 20 --after-hours-end 7
+logwatch -f auth.log --after-hours-start 20 --after-hours-end 7
 
-# On Linux — needs sudo to read /var/log/auth.log
-sudo python logwatch.py
+# Needs sudo to read the real system log on most distros
+sudo logwatch
 ```
 
 ---
 
-## How it works
+## What it detects
 
-LogWatch parses each log line with regex, extracts structured events, then runs 9 independent detectors against the full event set:
+| Finding | Severity | Description |
+|---|---|---|
+| Brute-force attack | 🔴 / 🟠 | IP with many failed logins — uses sliding time window, not just a total count |
+| Successful brute-force | 🔴 | IP that failed then succeeded — likely compromised |
+| Direct root SSH login | 🔴 | Root logging in directly over SSH (should never happen) |
+| Account targeted | 🟠 | One username hit with many failures across multiple IPs |
+| New user / group created | 🟠 | System account added — possible backdoor |
+| Sudo failures | 🟡 / 🟠 | User trying sudo without permission |
+| After-hours login | 🟡 | Successful login outside configured working hours |
+| Privilege escalation (`su`) | 🟡 | User switching identity with `su` |
+| Port scan signatures | 🟠 | SSH negotiation failures — typical of automated scanners |
 
-**Brute-force detection** uses a sliding time window. It doesn't just count total failures — it finds the densest burst of failures within a configurable window (default 60 seconds) and flags the worst case. An IP with 100 failures spread over a day is different from 20 failures in 60 seconds.
+---
 
-**Successful-after-failure detection** is the most important one. It cross-references every successful login against the set of IPs that previously failed. If an IP failed 18 times then succeeded once, that's a probable intrusion, not a mistyped password.
+## Supported log formats
 
-**After-hours detection** is time-aware. It reads the timestamp from each log entry and flags successful logins that happen outside normal working hours. This is configurable — a 24/7 ops team would set different hours than a small office.
+- `/var/log/auth.log` — Debian, Ubuntu, Kali Linux
+- `/var/log/secure` — RHEL, CentOS, Fedora, Rocky Linux
+- journald ISO timestamp exports
 
 ---
 
 ## Output formats
 
-**Terminal (default):** colour-coded severity levels, sample log lines, hourly activity heatmap, top attacking IPs table.
+**Terminal (default)** — colour-coded severity levels, sample matching log lines, top attacking IPs table, and an hourly activity heatmap showing when events were concentrated.
 
-**JSON (`--json`):** machine-readable output for piping into other tools, SIEM systems, or dashboards. The progress output goes to stderr so stdout is clean JSON.
+**JSON (`--json`)** — machine-readable output for piping into other tools, dashboards, or SIEM systems. Progress messages are routed to stderr so stdout is clean JSON and can be piped directly.
+
+```bash
+logwatch -f auth.log --json | jq '.findings[] | select(.severity=="critical")'
+```
 
 ```json
 {
   "generated_at": "2024-06-15T09:00:00",
   "stats": {
-    "total": 47,
-    "failed": 18,
-    "successful": 18,
-    "top_ips": [["45.33.32.156", 18]]
+    "total": 3847,
+    "failed": 412,
+    "successful": 39,
+    "top_ips": [["45.33.32.156", 382]]
   },
   "findings": [
     {
       "severity": "critical",
       "category": "brute_success",
       "title": "SUCCESS after failures: 'admin' from 45.33.32.156",
-      "detail": "...",
+      "detail": "This IP previously had failed attempts and then succeeded...",
       "ip": "45.33.32.156",
       "user": "admin"
     }
@@ -147,15 +144,32 @@ LogWatch parses each log line with regex, extracts structured events, then runs 
 
 ---
 
-## Try the demo
+## How it works
 
-Don't have a Linux auth log handy? Run:
+LogWatch runs 9 independent detectors against the parsed event set:
 
-```bash
-python logwatch.py --demo
+**Sliding window brute-force** — doesn't just count total failures. It finds the densest burst of failures within a configurable time window (default 60 seconds). 100 failures spread over a day is noise; 20 failures in 60 seconds is an active attack.
+
+**Successful-after-failure detection** — the most important one. Cross-references every successful login against the full set of IPs that previously failed. If an IP fails 18 times and then gets in once, that single success is the critical alert — not the 18 failures. This is how real SOC analysts think.
+
+**After-hours detection** — time-aware. Reads the timestamp from each log entry and flags successful logins outside configurable working hours, independently of any brute-force pattern.
+
+**Port scan detection** — looks for SSH negotiation failures (banner exchange errors, key type mismatches) which are the fingerprint of automated scanners probing open ports before attempting auth.
+
+---
+
+## Project structure
+
 ```
-
-This generates a realistic sample log with embedded attack patterns — brute force, root login, port scan, a backdoor account, after-hours intrusion — then analyses it immediately.
+logwatch/
+├── logwatch_pkg/
+│   ├── __init__.py
+│   └── core.py          ← all detection logic
+├── pyproject.toml       ← registers the logwatch command via pip
+├── requirements.txt
+├── README.md
+└── .gitignore
+```
 
 ---
 
@@ -163,6 +177,16 @@ This generates a realistic sample log with embedded attack patterns — brute fo
 
 - [`rich`](https://pypi.org/project/rich/) — terminal formatting, colour output, tables
 - Python stdlib only for everything else (`re`, `json`, `argparse`, `collections`, `ipaddress`, `datetime`)
+
+---
+
+## Try the demo
+
+No Linux auth log on hand? This generates a realistic log with embedded attack patterns — brute force, root login, port scan, a backdoor account, after-hours intrusion — then analyses it immediately:
+
+```bash
+logwatch --demo
+```
 
 ---
 

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "logwatch"
+version = "1.0.0"
+description = "System log anomaly detector — flags suspicious activity in Linux auth logs"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "kazim-45"}
+]
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+logwatch = "logwatch_pkg.core:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["logwatch_pkg*"]
